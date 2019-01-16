@@ -1,18 +1,6 @@
 
 menu "Configuration"
 
-config ETS
-	string "Main topic"
-	default "ETS"
-	help
-		Name of main topic
-
-config ESP32_ID
-	string "ESP32 ID"
-	default "ESP32-A"
-	help
-		ID of the ESP32. Must be univoque
-
 config WIFI_SSID
     string "WIFI name"
     default ""
@@ -24,46 +12,46 @@ config WIFI_PSW
     default ""
     help
 		WiFi password (WPA or WPA2), can be left blank if the network has no security set
-
-config MQTT_BROKER_ADDR
-  string "MQTT Server URI"
-  default ""
-  help
-    The URI of the MQTT Server to publish to, ex: "mqtt://iot.eclipse.org"
-
-
-config MQTT_BROKER_PSW
-	string "MQTT broker password"
-	default ""
-	help
-		Password of the MQTT server, can be left blank if the network has no security set
 		
-
-config MQTT_BROKER_PORT
-	int 1883
-	range 1 65535
-	default 1883
-	help
-		The port of the server MQTT
-
-config CHANNEL
+config WIFI_CHANNEL
 	int "Sniffing channel"
 	range 1 13
-	default 11
+	default 1
 	help
 		Channel in which ESP32 will sniff PROBE REQUEST
 
-config SNIFFING_TIME
+config WIFI_SNIFFING_TIME
 	int "Time of sniffig in seconds"
 	default 60
 	help
 		Time must be in seconds
 
-config VERBOSE
-    int "Verbose mode"
-    default 0
-    range 0 1
-    help
-        Must be true (1) or false (0): if true more information will be printed
+config MQTT_SERVER_URI
+  string "MQTT Server URI"
+  default ""
+  help
+    The URI of the MQTT Server to publish to, ex: "mqtt://iot.eclipse.org"
+
+config MQTT_PORT
+  int "MQTT Server port"
+  default 1883
+  help
+    The port of the MQTT Server to publish to, ex: 1883
+	
+config MQTT_TOPIC
+  string "MQTT Topic under which all Data is published"
+  default "esp32"
+  help
+		Name of main topic
+
+config MQTT_USER
+  string "MQTT username"
+  default ""
+
+config MQTT_PASS
+  string "MQTT password"
+  default ""		
+  help
+		Password of the MQTT server, can be left blank if the network has no security set
 
 endmenu

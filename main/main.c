@@ -22,10 +22,8 @@
 #include "lwip/dns.h"
 #include "lwip/netdb.h"
 
-
 #include "mqtt_client.h"
 #include "cJSON.h"
-
 
 #define	LED_GPIO_PIN			22
 #define	WIFI_CHANNEL_MAX		(13)
@@ -56,13 +54,13 @@ static void wifi_sniffer_packet_handler(void *buff, wifi_promiscuous_pkt_type_t 
 static void wifi_sniffer_deinit();
 static void get_ssid(unsigned char *data, char ssid[SSID_MAX_LEN], uint8_t ssid_len);
 static int get_sn(unsigned char *data);
-static esp_err_t wifi_event_handler(void *ctx, system_event_t *event);
-static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event);
 static void mqtt_app_start(void);
 static void wifi_init(void);
 static void wifi_connect_deinit();
 static void json_task(void *pvParameter);
 static void reboot(char *msg_err);
+static esp_err_t wifi_event_handler(void *ctx, system_event_t *event);
+static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event);
 
 RingbufHandle_t packetRingbuf ;
 
@@ -93,7 +91,7 @@ void app_main(void)
 	unsigned long startTime = esp_log_timestamp();
 	
 	while(true){
-		if (esp_log_timestamp() - startTime >= (CONFIG_SNIFFING_TIME * 1000) && running == false) {
+		if (esp_log_timestamp() - startTime >= (CONFIG_WIFI_SNIFFING_TIME * 1000) && running == false) {
 			running = true;
 			
 			wifi_sniffer_deinit();
@@ -104,19 +102,24 @@ void app_main(void)
 			gpio_set_level(LED_GPIO_PIN, level ^= 1);
 			vTaskDelay( 60 / portTICK_PERIOD_MS);
 			wifi_sniffer_set_channel(channel);
-			channel = (channel % CONFIG_CHANNEL) + 1;	
+			channel = (channel % CONFIG_WIFI_CHANNEL) + 1;	
 		}
-
 	}
-
 }
 
 // void loop(){
-	// gpio_set_level(LED_GPIO_PIN, level ^= 1);
-	// vTaskDelay(WIFI_CHANNEL_SWITCH_INTERVAL / portTICK_PERIOD_MS);
-	// wifi_sniffer_set_channel(channel);
-	// channel = (channel % CONFIG_CHANNEL) + 1;	
-	// printf("Kanal wechsel");
+		// if (esp_log_timestamp() - startTime >= (CONFIG_WIFI_SNIFFING_TIME * 1000) && running == false) {
+			// running = true;	
+			// wifi_sniffer_deinit();
+			// wifi_init();
+			// mqtt_app_start();
+			// vTaskDelete(&xHandle_json);
+		// }else if(running == false){
+			// gpio_set_level(LED_GPIO_PIN, level ^= 1);
+			// vTaskDelay( 60 / portTICK_PERIOD_MS);
+			// wifi_sniffer_set_channel(channel);
+			// channel = (channel % CONFIG_WIFI_CHANNEL) + 1;	
+		// }
 // }
 
 
@@ -188,7 +191,6 @@ static int get_sn(unsigned char *data)
 }
 
 /*END Sniffer*/
-
 static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event)
 {
     esp_mqtt_client_handle_t client = event->client;
@@ -237,8 +239,11 @@ static void mqtt_app_start(void)
 {
 	int msg_id;
     const esp_mqtt_client_config_t mqtt_cfg = {
-    .uri  = CONFIG_MQTT_BROKER_ADDR,
-    .port = CONFIG_MQTT_BROKER_PORT,
+    .uri  = CONFIG_MQTT_SERVER_URI,
+    .port = CONFIG_MQTT_PORT,
+	.transport = MQTT_TRANSPORT_OVER_TCP,
+    .username = CONFIG_MQTT_USER,
+    .password = CONFIG_MQTT_PASS,
     .event_handle = mqtt_event_handler,
 };
 
@@ -250,14 +255,13 @@ static void mqtt_app_start(void)
 	xEventGroupWaitBits(mqtt_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
 	ESP_LOGI(TAG, "MQTT Client connected");
 	
-	msg_id = esp_mqtt_client_publish(client, CONFIG_ETS, string, strlen(string), 0, 0);
-	ESP_LOGI(TAG, "[WI-FI] Sent publish successful on topic=%s, msg_id=%d", CONFIG_ETS, msg_id);
+	msg_id = esp_mqtt_client_publish(client, CONFIG_MQTT_TOPIC, string, strlen(string), 0, 0);
+	ESP_LOGI(TAG, "[WI-FI] Sent publish successful on topic=%s, msg_id=%d", CONFIG_MQTT_TOPIC, msg_id);
 }
 
 /*END MQTT*/
 
 /*WIFI INIT*/
-
 static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
 {
     switch (event->event_id) {
@@ -266,7 +270,6 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
             break;
         case SYSTEM_EVENT_STA_GOT_IP:
             xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);
-
             break;
         case SYSTEM_EVENT_STA_DISCONNECTED:
             esp_wifi_connect();
@@ -373,8 +376,6 @@ static void json_task(void *pvParameter)
 		else{
 				vRingbufferReturnItem(packetRingbuf, ppkt);
 		}
-		
-	
 	}
 }
 
