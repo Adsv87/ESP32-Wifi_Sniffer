@@ -38,7 +38,14 @@ config SSID
     default 0
     range 0 1
     help
-        Must be true (1) or false (0): if true SSID will be catched
+        Must be true (1) or false (0): if true SSID will be catched. PROBE_REQUEST must be true (1)
+		
+config DEVICE_SIGNATURE
+    int "Device Signature"
+    default 0
+    range 0 1
+    help
+        Must be true (1) or false (0): if true SSID will be catched. PROBE_REQUEST must be true (1)
 		
 config MQTT_SERVER_URI
   string "MQTT Server URI"

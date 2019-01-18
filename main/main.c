@@ -62,13 +62,14 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event);
 static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event);
 
 RingbufHandle_t packetRingbuf ;
+static const cJSON *mqtt_Packages ;
 
 static const char *TAG = "main";
 static EventGroupHandle_t wifi_event_group;
 static EventGroupHandle_t mqtt_event_group;
 const static int CONNECTED_BIT = BIT0;
 bool running = false;
-char *string = NULL;
+char *string = NULL; //Später löschen und mqtt einfügen
 
 /* Handle for json task */
 static TaskHandle_t xHandle_json = NULL;
@@ -80,7 +81,7 @@ void app_main(void)
 	nvs_flash_init();
 	gpio_set_direction(LED_GPIO_PIN, GPIO_MODE_OUTPUT);	
 	packetRingbuf = xRingbufferCreate(12 * 1024, RINGBUF_TYPE_NOSPLIT);
-
+	mqtt_Packages = cJSON_CreateObject();
 	wifi_sniffer_init();
 	
 	xTaskCreate(&json_task, "json_task", 99999, NULL, 1, &xHandle_json);
@@ -94,11 +95,17 @@ void app_main(void)
 		if (esp_log_timestamp() - startTime >= (CONFIG_WIFI_SNIFFING_TIME * 1000) && running == false) {
 			running = true;
 			
+			//später für mqtt
+			string = cJSON_Print(mqtt_Packages);
+			if (string == NULL) {
+				fprintf(stderr, "Failed to print monitor.\n");
+			}
+			printf("%s", string);
 
 			wifi_sniffer_deinit();
 			wifi_init();
 			mqtt_app_start();
-				
+			////
 		}else if(running == false){
 			gpio_set_level(LED_GPIO_PIN, level ^= 1);
 			vTaskDelay( 60 / portTICK_PERIOD_MS);
@@ -127,7 +134,6 @@ void app_main(void)
 /* Sniffer*/
 void wifi_sniffer_init(void)
 {
-	// nvs_flash_init();
     tcpip_adapter_init();
     ESP_ERROR_CHECK( esp_event_loop_init(wifi_event_handler, NULL) );
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -200,7 +206,7 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event)
 {
     esp_mqtt_client_handle_t client = event->client;
     int msg_id;
-    // your_context_t *context = event->context;
+
     switch (event->event_id) {
         case MQTT_EVENT_CONNECTED:
             ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
@@ -260,6 +266,11 @@ static void mqtt_app_start(void)
 	xEventGroupWaitBits(mqtt_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
 	ESP_LOGI(TAG, "MQTT Client connected");
 	
+	string = cJSON_Print(mqtt_Packages);
+	if (string == NULL) {
+		fprintf(stderr, "Failed to print monitor.\n");
+	}
+			
 	msg_id = esp_mqtt_client_publish(client, CONFIG_MQTT_TOPIC, string, strlen(string), 0, 0);
 	ESP_LOGI(TAG, "[WI-FI] Sent publish successful on topic=%s, msg_id=%d", CONFIG_MQTT_TOPIC, msg_id);
 }
@@ -291,7 +302,6 @@ static void wifi_init(void)
 	nvs_flash_init();
     tcpip_adapter_init();
     wifi_event_group = xEventGroupCreate();
-    // ESP_ERROR_CHECK(esp_event_loop_init(wifi_event_handler, NULL));
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
@@ -356,8 +366,12 @@ static void json_task(void *pvParameter)
 			cJSON *adr =  cJSON_CreateObject();
 			cJSON *rssi = cJSON_CreateObject();
 			
-			cJSON *mqtt_Packages = cJSON_CreateObject();
-			jdevices = cJSON_AddArrayToObject(mqtt_Packages, "devices");
+			if(CONFIG_PROBE_REQUEST){
+				jdevices = cJSON_AddArrayToObject(mqtt_Packages, "PROBE_REQUEST");
+			}else{
+				jdevices = cJSON_AddArrayToObject(mqtt_Packages, "Traffic Paket");
+			}
+			
 			
 			ssid_len = ppkt->payload[25];
 			if((ssid_len > 0) && CONFIG_SSID)	{
@@ -378,12 +392,11 @@ static void json_task(void *pvParameter)
 			cJSON_AddItemToArray(jdevices, rssi);
 			cJSON_AddItemToArray(jdevices, jssid);
 			
-			string = cJSON_Print(mqtt_Packages);
-			// char *Tempstring = cJSON_Print(mqtt_Packages);
-			if (string == NULL) {
-				fprintf(stderr, "Failed to print monitor.\n");
-			}
-			printf("%s", string);		
+			// string = cJSON_Print(mqtt_Packages);
+			// if (string == NULL) {
+				// fprintf(stderr, "Failed to print monitor.\n");
+			// }
+			// printf("%s", string);		
 		}
 			vRingbufferReturnItem(packetRingbuf, ppkt);
 
