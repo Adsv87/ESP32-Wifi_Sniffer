@@ -14,18 +14,32 @@ config WIFI_PSW
 		WiFi password (WPA or WPA2), can be left blank if the network has no security set
 		
 config WIFI_CHANNEL
-	int "Sniffing channel"
+	int "Max channel range"
 	range 1 13
-	default 1
+	default 13
 	help
 		Channel in which ESP32 will sniff PROBE REQUEST
 
 config WIFI_SNIFFING_TIME
 	int "Time of sniffig in seconds"
-	default 60
+	default 30
 	help
 		Time must be in seconds
 
+config PROBE_REQUEST
+    int "Probe Request Sniffer"
+    default 0
+    range 0 1
+    help
+        Must be true (1) or false (0): if true only Probe Request is sniffed
+
+config SSID
+    int "SSID"
+    default 0
+    range 0 1
+    help
+        Must be true (1) or false (0): if true SSID will be catched
+		
 config MQTT_SERVER_URI
   string "MQTT Server URI"
   default ""

@@ -30,7 +30,6 @@
 #define	WIFI_CHANNEL_SWITCH_INTERVAL	(500)
 #define SSID_MAX_LEN (32+1) //max length of a SSID
 
-
 typedef struct {
 	unsigned frame_ctrl:16;
 	unsigned duration_id:16;
@@ -90,14 +89,16 @@ void app_main(void)
 	
 	unsigned long startTime = esp_log_timestamp();
 	
-	while(true){
+	while(true){			
+			
 		if (esp_log_timestamp() - startTime >= (CONFIG_WIFI_SNIFFING_TIME * 1000) && running == false) {
 			running = true;
 			
+
 			wifi_sniffer_deinit();
 			wifi_init();
 			mqtt_app_start();
-			vTaskDelete(&xHandle_json);
+				
 		}else if(running == false){
 			gpio_set_level(LED_GPIO_PIN, level ^= 1);
 			vTaskDelay( 60 / portTICK_PERIOD_MS);
@@ -164,19 +165,23 @@ const char * wifi_sniffer_packet_type2str(wifi_promiscuous_pkt_type_t type)
 
 void wifi_sniffer_packet_handler(void* buff, wifi_promiscuous_pkt_type_t type)
 {
-	if (type == WIFI_PKT_MGMT){
+		
+	if (type == WIFI_PKT_MGMT && CONFIG_PROBE_REQUEST){
 		wifi_promiscuous_pkt_t *ppkt = (wifi_promiscuous_pkt_t *)buff;
 		xRingbufferSend(packetRingbuf, ppkt, ppkt->rx_ctrl.sig_len, 1);
-	}	 	
+	}	
+	else if(!CONFIG_PROBE_REQUEST){
+		wifi_promiscuous_pkt_t *ppkt = (wifi_promiscuous_pkt_t *)buff;
+		xRingbufferSend(packetRingbuf, ppkt, ppkt->rx_ctrl.sig_len, 1);
+	}		
 }
 
 static void get_ssid(unsigned char *data, char ssid[SSID_MAX_LEN], uint8_t ssid_len)
 {
 	int i, j;
-			for(i=26, j=0; j<=SSID_MAX_LEN && j<=ssid_len; i++, j++){
+			for(i=26, j=0; j<=SSID_MAX_LEN && j<=ssid_len-1 ; i++, j++){
 				ssid[j] = data[i];
 	}
-	ssid[j] = '\0';
 }
 
 static int get_sn(unsigned char *data)
@@ -323,7 +328,6 @@ static void json_task(void *pvParameter)
 		wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)ppkt->payload;
 		wifi_ieee80211_mac_hdr_t *hdr = &ipkt->hdr;
 		
-		// printf("\n%d ", len);
 		//Falls Ringpuffer leer ist, 
 		if (len == 1) {
 			printf("\n Ringbuffer wird geleert");
@@ -332,16 +336,19 @@ static void json_task(void *pvParameter)
 			vTaskDelete(NULL);
 		}		
 		
-		// printf("%d", hdr->frame_ctrl);
-		if(hdr->frame_ctrl==64 ){
-			
+		// unsigned int frameControl = ((unsigned int)snifferPacket->data[1] << 8) + snifferPacket->data[0];
+
+		// uint8_t version      = (hdr->frame_ctrl & 0b0000000000000011) >> 0;
+		// uint8_t frameType    = (hdr->frame_ctrl & 0b0000000000001100) >> 2;
+		// uint8_t frameSubType = (hdr->frame_ctrl & 0b0000000011110000) >> 4;
+		uint8_t toDS         = (hdr->frame_ctrl & 0b0000000100000000) >> 8;
+		uint8_t fromDS       = (hdr->frame_ctrl & 0b0000001000000000) >> 9;
+				
+		if( (fromDS == 0 && toDS == 1) || (hdr->frame_ctrl==64 ) )
+		{	
 			uint8_t ssid_len;
 			char ssid[SSID_MAX_LEN] = "\0";
-			ssid_len = ppkt->payload[25]; 
-			if(ssid_len > 0)	
-				get_ssid(ppkt->payload, ssid, ssid_len);
-		
-			// char *string = NULL;
+				
 			char *temp_Adr[18]; 
 			cJSON *jdevices = NULL;
 			cJSON *jssid =  cJSON_CreateObject();
@@ -352,9 +359,15 @@ static void json_task(void *pvParameter)
 			cJSON *mqtt_Packages = cJSON_CreateObject();
 			jdevices = cJSON_AddArrayToObject(mqtt_Packages, "devices");
 			
+			ssid_len = ppkt->payload[25];
+			if((ssid_len > 0) && CONFIG_SSID)	{
+ 
+				get_ssid(ppkt->payload, ssid, ssid_len);
+			}
+			
 			sprintf(temp_Adr, "%02x:%02x:%02x:%02x:%02x:%02x", hdr->addr2[0],hdr->addr2[1],hdr->addr2[2],
 				 hdr->addr2[3],hdr->addr2[4],hdr->addr2[5]);
-				 
+
 			cJSON_AddStringToObject(adr, "Adresse", temp_Adr);
 			cJSON_AddNumberToObject(channel, "Channel", ppkt->rx_ctrl.channel);
 			cJSON_AddNumberToObject(rssi, "RSSI", ppkt->rx_ctrl.rssi);
@@ -366,16 +379,14 @@ static void json_task(void *pvParameter)
 			cJSON_AddItemToArray(jdevices, jssid);
 			
 			string = cJSON_Print(mqtt_Packages);
-
+			// char *Tempstring = cJSON_Print(mqtt_Packages);
 			if (string == NULL) {
 				fprintf(stderr, "Failed to print monitor.\n");
 			}
 			printf("%s", string);		
-			
 		}
-		else{
-				vRingbufferReturnItem(packetRingbuf, ppkt);
-		}
+			vRingbufferReturnItem(packetRingbuf, ppkt);
+
 	}
 }
 
