@@ -29,6 +29,7 @@
 #define	WIFI_CHANNEL_MAX		(13)
 #define	WIFI_CHANNEL_SWITCH_INTERVAL	(500)
 #define SSID_MAX_LEN (32+1) //max length of a SSID
+#define MACLIST_MAX_LEN (256)
 
 typedef struct {
 	unsigned frame_ctrl:16;
@@ -69,6 +70,8 @@ static EventGroupHandle_t wifi_event_group;
 static EventGroupHandle_t mqtt_event_group;
 const static int CONNECTED_BIT = BIT0;
 bool running = false;
+char deviceMacList[MACLIST_MAX_LEN][19];
+unsigned int deviceCounter = 0;
 char *string = NULL; //Später löschen und mqtt einfügen
 
 /* Handle for json task */
@@ -101,7 +104,8 @@ void app_main(void)
 				fprintf(stderr, "Failed to print monitor.\n");
 			}
 			printf("%s", string);
-
+			
+			vTaskDelay( 100 / portTICK_PERIOD_MS);
 			wifi_sniffer_deinit();
 			wifi_init();
 			mqtt_app_start();
@@ -188,62 +192,49 @@ static void get_ssid(unsigned char *data, char ssid[SSID_MAX_LEN], uint8_t ssid_
 			for(i=26, j=0; j<=SSID_MAX_LEN && j<=ssid_len-1 ; i++, j++){
 				ssid[j] = data[i];
 	}
+	ssid[j] ="\0";
 }
 
-static int get_sn(unsigned char *data)
-{
-	int sn;
-    char num[5] = "\0";
+// static int get_sn(unsigned char *data)
+// {
+	// int sn;
+    // char num[5] = "\0";
 
-	sprintf(num, "%02x%02x", data[22], data[23]);
-    sscanf(num, "%x", &sn);
+	// sprintf(num, "%02x%02x", data[22], data[23]);
+    // sscanf(num, "%x", &sn);
 
-    return sn;
-}
+    // return sn;
+// }
 
 /*END Sniffer*/
 static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event)
 {
-    esp_mqtt_client_handle_t client = event->client;
-    int msg_id;
-
-    switch (event->event_id) {
-        case MQTT_EVENT_CONNECTED:
-            ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
-            msg_id = esp_mqtt_client_subscribe(client, "/topic/qos0", 0);
-            ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
-
-            msg_id = esp_mqtt_client_subscribe(client, "/topic/qos1", 1);
-            ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
-
-            msg_id = esp_mqtt_client_unsubscribe(client, "/topic/qos1");
-            ESP_LOGI(TAG, "sent unsubscribe successful, msg_id=%d", msg_id);
-            break;
-        case MQTT_EVENT_DISCONNECTED:
-            ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
-            break;
-
-        case MQTT_EVENT_SUBSCRIBED:
-            ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
-            msg_id = esp_mqtt_client_publish(client, "/topic/qos0", "data", 0, 0, 0);
-            ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
-            break;
-        case MQTT_EVENT_UNSUBSCRIBED:
-            ESP_LOGI(TAG, "MQTT_EVENT_UNSUBSCRIBED, msg_id=%d", event->msg_id);
-            break;
-        case MQTT_EVENT_PUBLISHED:
-            ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);
-            break;
-        case MQTT_EVENT_DATA:
-            ESP_LOGI(TAG, "MQTT_EVENT_DATA");
-            printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
-            printf("DATA=%.*s\r\n", event->data_len, event->data);
-            break;
-        case MQTT_EVENT_ERROR:
-            ESP_LOGI(TAG, "MQTT_EVENT_ERROR");
-            break;
-    }
-    return ESP_OK;
+  esp_mqtt_client_handle_t client = event->client;
+  // your_context_t *context = event->context;
+  switch (event->event_id) {
+    case MQTT_EVENT_CONNECTED:
+      ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
+      xEventGroupSetBits(mqtt_event_group, CONNECTED_BIT);
+      break;
+    case MQTT_EVENT_DISCONNECTED:
+      ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
+      xEventGroupClearBits(mqtt_event_group, CONNECTED_BIT);
+      break;
+    case MQTT_EVENT_PUBLISHED:
+      ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);
+      break;
+    case MQTT_EVENT_DATA:
+      ESP_LOGI(TAG, "MQTT_EVENT_DATA");
+      printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
+      printf("DATA=%.*s\r\n", event->data_len, event->data);
+    break;
+    case MQTT_EVENT_ERROR:
+      ESP_LOGI(TAG, "MQTT_EVENT_ERROR");
+      break;
+    default:
+      break;
+  }
+  return ESP_OK;
 }
 
 static void mqtt_app_start(void)
@@ -318,12 +309,12 @@ static void wifi_init(void)
     ESP_LOGI(TAG, "Waiting for wifi");
     xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
 }
-static void wifi_connect_deinit()
-{
-	ESP_ERROR_CHECK(esp_wifi_disconnect()); //disconnect the ESP32 WiFi station from the AP
-	ESP_ERROR_CHECK(esp_wifi_stop()); //it stop station and free station control block
-	ESP_ERROR_CHECK(esp_wifi_deinit()); //free all resource allocated in esp_wifi_init and stop WiFi task
-}
+// static void wifi_connect_deinit()
+// {
+	// ESP_ERROR_CHECK(esp_wifi_disconnect()); //disconnect the ESP32 WiFi station from the AP
+	// ESP_ERROR_CHECK(esp_wifi_stop()); //it stop station and free station control block
+	// ESP_ERROR_CHECK(esp_wifi_deinit()); //free all resource allocated in esp_wifi_init and stop WiFi task
+// }
 /*WIFI End*/
 
 /*JSON*/
@@ -340,7 +331,6 @@ static void json_task(void *pvParameter)
 		
 		//Falls Ringpuffer leer ist, 
 		if (len == 1) {
-			printf("\n Ringbuffer wird geleert");
 			vRingbufferReturnItem(packetRingbuf, ppkt);
 			vRingbufferDelete(packetRingbuf);
 			vTaskDelete(NULL);
@@ -354,43 +344,69 @@ static void json_task(void *pvParameter)
 		uint8_t toDS         = (hdr->frame_ctrl & 0b0000000100000000) >> 8;
 		uint8_t fromDS       = (hdr->frame_ctrl & 0b0000001000000000) >> 9;
 				
-		if( (fromDS == 0 && toDS == 1) || (hdr->frame_ctrl==64 ) )
+		if( (fromDS == 0 && toDS == 1) || (hdr->frame_ctrl== 64 ) )
 		{	
-			uint8_t ssid_len;
-			char ssid[SSID_MAX_LEN] = "\0";
-				
-			char *temp_Adr[18]; 
-			cJSON *jdevices = NULL;
-			cJSON *jssid =  cJSON_CreateObject();
-			cJSON *channel =  cJSON_CreateObject();
-			cJSON *adr =  cJSON_CreateObject();
-			cJSON *rssi = cJSON_CreateObject();
-			
-			if(CONFIG_PROBE_REQUEST){
-				jdevices = cJSON_AddArrayToObject(mqtt_Packages, "PROBE_REQUEST");
-			}else{
-				jdevices = cJSON_AddArrayToObject(mqtt_Packages, "Traffic Paket");
-			}
-			
-			
-			ssid_len = ppkt->payload[25];
-			if((ssid_len > 0) && CONFIG_SSID)	{
- 
-				get_ssid(ppkt->payload, ssid, ssid_len);
-			}
-			
-			sprintf(temp_Adr, "%02x:%02x:%02x:%02x:%02x:%02x", hdr->addr2[0],hdr->addr2[1],hdr->addr2[2],
+			bool knowMac = false;	
+			char temp_Adr[19]; 
+	
+			snprintf(temp_Adr,19 ,"%02x:%02x:%02x:%02x:%02x:%02x", hdr->addr2[0],hdr->addr2[1],hdr->addr2[2],
 				 hdr->addr2[3],hdr->addr2[4],hdr->addr2[5]);
+				 
+			// printf("\n %d", deviceCounter);
+			// printf("\n Vergleiche  %s mit ", temp_Adr);
+			for(int i=1; i <= deviceCounter; i++){
+				printf(" %s ",  deviceMacList[i-1]);
+				if( 0 == memcmp(deviceMacList[i-1], temp_Adr, 19 ) ){
+					knowMac = true;
+					// printf("\nbreake ");					
+					break;
+					
+				}
+			}
+								
+			if(!knowMac &&  (deviceCounter+1 <= MACLIST_MAX_LEN)){
+				char ssid[SSID_MAX_LEN] = "\0";
+				char packetID[20];
+				cJSON *jdevices = NULL;
+				cJSON *jssid =  cJSON_CreateObject();
+				cJSON *channel =  cJSON_CreateObject();
+				cJSON *adr =  cJSON_CreateObject();
+				cJSON *rssi = cJSON_CreateObject();
 
-			cJSON_AddStringToObject(adr, "Adresse", temp_Adr);
-			cJSON_AddNumberToObject(channel, "Channel", ppkt->rx_ctrl.channel);
-			cJSON_AddNumberToObject(rssi, "RSSI", ppkt->rx_ctrl.rssi);
-			cJSON_AddStringToObject(jssid, "SSID", ssid);
+				if(CONFIG_PROBE_REQUEST){
+					sprintf(packetID, "Probe Request %d", deviceCounter);
+					jdevices = cJSON_AddArrayToObject(mqtt_Packages, packetID);
+				}else{
+					sprintf(packetID, "WLAN Traffic %d", deviceCounter);
+					jdevices = cJSON_AddArrayToObject(mqtt_Packages, packetID);
+				}
+				
+				if( CONFIG_SSID ){
+					uint8_t ssid_len;
+					
+					ssid_len = ppkt->payload[25];
+					if(ssid_len > 0){
+						get_ssid(ppkt->payload, ssid, ssid_len);	
+					}	
+				}
+						
+				// deviceMacList[deviceCounter] = temp_Adr;
+				strcpy(deviceMacList[deviceCounter], temp_Adr);				
+				// printf("\n %s in die Liste eingefügt", deviceMacList[deviceCounter]);
+				deviceCounter++;
+				
+				
+				cJSON_AddStringToObject(adr, "Adresse", temp_Adr);
+				cJSON_AddNumberToObject(channel, "Channel", ppkt->rx_ctrl.channel);
+				cJSON_AddNumberToObject(rssi, "RSSI", ppkt->rx_ctrl.rssi);
+				cJSON_AddStringToObject(jssid, "SSID", ssid);
 			
-			cJSON_AddItemToArray(jdevices, adr);
-			cJSON_AddItemToArray(jdevices, channel);
-			cJSON_AddItemToArray(jdevices, rssi);
-			cJSON_AddItemToArray(jdevices, jssid);
+				cJSON_AddItemToArray(jdevices, adr);
+				cJSON_AddItemToArray(jdevices, channel);
+				cJSON_AddItemToArray(jdevices, rssi);
+				cJSON_AddItemToArray(jdevices, jssid);
+				
+			}
 			
 			// string = cJSON_Print(mqtt_Packages);
 			// if (string == NULL) {
@@ -398,6 +414,7 @@ static void json_task(void *pvParameter)
 			// }
 			// printf("%s", string);		
 		}
+
 			vRingbufferReturnItem(packetRingbuf, ppkt);
 
 	}
