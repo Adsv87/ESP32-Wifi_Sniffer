@@ -194,7 +194,7 @@ static void get_ssid(unsigned char *data, char ssid[SSID_MAX_LEN], uint8_t ssid_
 			for(i=26, j=0; j<=SSID_MAX_LEN && j<=ssid_len-1 ; i++, j++){
 				ssid[j] = data[i];
 	}
-	ssid[j] ="\0";
+	// ssid[j] ="\0";
 }
 
 // static int get_sn(unsigned char *data)
