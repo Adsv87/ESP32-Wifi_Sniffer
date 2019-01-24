@@ -178,11 +178,13 @@ void wifi_sniffer_packet_handler(void* buff, wifi_promiscuous_pkt_type_t type)
 		
 	if (type == WIFI_PKT_MGMT && CONFIG_PROBE_REQUEST){
 		wifi_promiscuous_pkt_t *ppkt = (wifi_promiscuous_pkt_t *)buff;
-		xRingbufferSend(packetRingbuf, ppkt, ppkt->rx_ctrl.sig_len, 1);
+		if( ppkt->rx_ctrl.rssi < CONFIG_RSSI_Max);
+			xRingbufferSend(packetRingbuf, ppkt, ppkt->rx_ctrl.sig_len, 1);
 	}	
 	else if(!CONFIG_PROBE_REQUEST){
 		wifi_promiscuous_pkt_t *ppkt = (wifi_promiscuous_pkt_t *)buff;
-		xRingbufferSend(packetRingbuf, ppkt, ppkt->rx_ctrl.sig_len, 1);
+		if( ppkt->rx_ctrl.rssi < CONFIG_RSSI_Max);
+			xRingbufferSend(packetRingbuf, ppkt, ppkt->rx_ctrl.sig_len, 1);
 	}		
 }
 
