@@ -72,7 +72,7 @@ const static int CONNECTED_BIT = BIT0;
 bool running = false;
 char deviceMacList[MACLIST_MAX_LEN][19];
 unsigned int deviceCounter = 0;
-char *string = NULL; //Später löschen und mqtt einfügen
+
 
 /* Handle for json task */
 static TaskHandle_t xHandle_json = NULL;
@@ -101,11 +101,7 @@ void app_main(void)
 			running = true;
 			
 			//später für mqtt
-			string = cJSON_Print(mqtt_Packages);
-			if (string == NULL) {
-				fprintf(stderr, "Failed to print monitor.\n");
-			}
-			printf("%s", string);
+
 			
 			vTaskDelay( 100 / portTICK_PERIOD_MS);
 			wifi_sniffer_deinit();
@@ -264,11 +260,12 @@ static void mqtt_app_start(void)
 	xEventGroupWaitBits(mqtt_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
 	ESP_LOGI(TAG, "MQTT Client connected");
 	
-	string = cJSON_Print(mqtt_Packages);
+	char *string = cJSON_Print(mqtt_Packages);
 	if (string == NULL) {
 		fprintf(stderr, "Failed to print monitor.\n");
 	}
-			
+	
+	printf("%s", string);		
 	msg_id = esp_mqtt_client_publish(client, CONFIG_MQTT_TOPIC, string, strlen(string), 0, 0);
 	ESP_LOGI(TAG, "[WI-FI] Sent publish successful on topic=%s, msg_id=%d", CONFIG_MQTT_TOPIC, msg_id);
 }
@@ -388,7 +385,7 @@ static void json_task(void *pvParameter)
 					// jdevices = cJSON_AddArrayToObject(mqtt_Packages, packetID);
 				// }
 				
-				if( CONFIG_SSID ){
+				if( CONFIG_SSID || hdr->frame_ctrl== 64  ){
 					uint8_t ssid_len;
 					
 					ssid_len = ppkt->payload[25];
@@ -406,12 +403,12 @@ static void json_task(void *pvParameter)
 				cJSON_AddStringToObject(adr, "Adresse", temp_Adr);
 				// cJSON_AddNumberToObject(channel, "Channel", ppkt->rx_ctrl.channel);
 				// cJSON_AddNumberToObject(rssi, "RSSI", ppkt->rx_ctrl.rssi);
-				// cJSON_AddStringToObject(jssid, "SSID", ssid);
+				cJSON_AddStringToObject(jssid, "SSID", ssid);
 			
 				cJSON_AddItemToArray(jdevices, adr);
 				// cJSON_AddItemToArray(jdevices, channel);
 				// cJSON_AddItemToArray(jdevices, rssi);
-				// cJSON_AddItemToArray(jdevices, jssid);
+				cJSON_AddItemToArray(adr, jssid);
 				
 			}
 			
