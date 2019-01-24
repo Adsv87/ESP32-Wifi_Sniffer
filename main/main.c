@@ -64,7 +64,7 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event);
 
 RingbufHandle_t packetRingbuf ;
 static cJSON *mqtt_Packages ;
-
+static cJSON *jdevices ;
 static const char *TAG = "main";
 static EventGroupHandle_t wifi_event_group;
 static EventGroupHandle_t mqtt_event_group;
@@ -85,6 +85,8 @@ void app_main(void)
 	gpio_set_direction(LED_GPIO_PIN, GPIO_MODE_OUTPUT);	
 	packetRingbuf = xRingbufferCreate(12 * 1024, RINGBUF_TYPE_NOSPLIT);
 	mqtt_Packages = cJSON_CreateObject();
+	jdevices = NULL;
+	jdevices = cJSON_AddArrayToObject(mqtt_Packages, "Mac");
 	wifi_sniffer_init();
 	
 	xTaskCreate(&json_task, "json_task", 99999, NULL, 1, &xHandle_json);
@@ -178,13 +180,15 @@ void wifi_sniffer_packet_handler(void* buff, wifi_promiscuous_pkt_type_t type)
 		
 	if (type == WIFI_PKT_MGMT && CONFIG_PROBE_REQUEST){
 		wifi_promiscuous_pkt_t *ppkt = (wifi_promiscuous_pkt_t *)buff;
-		if( ppkt->rx_ctrl.rssi < CONFIG_RSSI_Max);
+		if( ppkt->rx_ctrl.rssi > CONFIG_RSSI_Max){			
 			xRingbufferSend(packetRingbuf, ppkt, ppkt->rx_ctrl.sig_len, 1);
+		}
 	}	
 	else if(!CONFIG_PROBE_REQUEST){
 		wifi_promiscuous_pkt_t *ppkt = (wifi_promiscuous_pkt_t *)buff;
-		if( ppkt->rx_ctrl.rssi < CONFIG_RSSI_Max);
+		if( ppkt->rx_ctrl.rssi > CONFIG_RSSI_Max){
 			xRingbufferSend(packetRingbuf, ppkt, ppkt->rx_ctrl.sig_len, 1);
+		}
 	}		
 }
 
@@ -370,19 +374,19 @@ static void json_task(void *pvParameter)
 			if(!knowMac &&  (deviceCounter+1 <= MACLIST_MAX_LEN)){
 				char ssid[SSID_MAX_LEN] = "\0";
 				char packetID[20];
-				cJSON *jdevices = NULL;
+				// cJSON *jdevices = NULL;
 				cJSON *jssid =  cJSON_CreateObject();
 				cJSON *channel =  cJSON_CreateObject();
 				cJSON *adr =  cJSON_CreateObject();
 				cJSON *rssi = cJSON_CreateObject();
 
-				if(CONFIG_PROBE_REQUEST){
-					sprintf(packetID, "Probe Request %d", deviceCounter);
-					jdevices = cJSON_AddArrayToObject(mqtt_Packages, packetID);
-				}else{
-					sprintf(packetID, "WLAN Traffic %d", deviceCounter);
-					jdevices = cJSON_AddArrayToObject(mqtt_Packages, packetID);
-				}
+				// if(CONFIG_PROBE_REQUEST){
+					// sprintf(packetID, "Probe Request %d", deviceCounter);
+					// jdevices = cJSON_AddArrayToObject(mqtt_Packages, packetID);
+				// }else{
+					// sprintf(packetID, "WLAN Traffic %d", deviceCounter);
+					// jdevices = cJSON_AddArrayToObject(mqtt_Packages, packetID);
+				// }
 				
 				if( CONFIG_SSID ){
 					uint8_t ssid_len;
@@ -400,14 +404,14 @@ static void json_task(void *pvParameter)
 				
 				
 				cJSON_AddStringToObject(adr, "Adresse", temp_Adr);
-				cJSON_AddNumberToObject(channel, "Channel", ppkt->rx_ctrl.channel);
-				cJSON_AddNumberToObject(rssi, "RSSI", ppkt->rx_ctrl.rssi);
-				cJSON_AddStringToObject(jssid, "SSID", ssid);
+				// cJSON_AddNumberToObject(channel, "Channel", ppkt->rx_ctrl.channel);
+				// cJSON_AddNumberToObject(rssi, "RSSI", ppkt->rx_ctrl.rssi);
+				// cJSON_AddStringToObject(jssid, "SSID", ssid);
 			
 				cJSON_AddItemToArray(jdevices, adr);
-				cJSON_AddItemToArray(jdevices, channel);
-				cJSON_AddItemToArray(jdevices, rssi);
-				cJSON_AddItemToArray(jdevices, jssid);
+				// cJSON_AddItemToArray(jdevices, channel);
+				// cJSON_AddItemToArray(jdevices, rssi);
+				// cJSON_AddItemToArray(jdevices, jssid);
 				
 			}
 			
