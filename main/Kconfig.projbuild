@@ -26,6 +26,12 @@ config WIFI_SNIFFING_TIME
 	help
 		Time must be in seconds
 
+config RSSI_Max
+	int "RSSI_Max"
+	default -90
+	help
+		
+
 config PROBE_REQUEST
     int "Probe Request Sniffer"
     default 0
