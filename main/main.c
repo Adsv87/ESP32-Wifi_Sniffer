@@ -63,7 +63,7 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event);
 static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event);
 
 RingbufHandle_t packetRingbuf ;
-static const cJSON *mqtt_Packages ;
+static cJSON *mqtt_Packages ;
 
 static const char *TAG = "main";
 static EventGroupHandle_t wifi_event_group;
@@ -236,6 +236,7 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event)
   }
   return ESP_OK;
 }
+
 
 static void mqtt_app_start(void)
 {
