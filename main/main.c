@@ -17,6 +17,10 @@
 #include "freertos/semphr.h"
 #include "freertos/queue.h"
 #include "freertos/event_groups.h"
+#include "esp_sleep.h"
+#include "driver/rtc_io.h"
+
+
 
 #include "lwip/sockets.h"
 #include "lwip/dns.h"
@@ -25,20 +29,18 @@
 #include "mqtt_client.h"
 #include "cJSON.h"
 
-#define	LED_GPIO_PIN			22
-#define	WIFI_CHANNEL_MAX		(13)
-#define	WIFI_CHANNEL_SWITCH_INTERVAL	(500)
-#define SSID_MAX_LEN (32+1) //max length of a SSID
-#define MACLIST_MAX_LEN (256)
+
+#define SSID_MAX_LEN (32+1) 	// Maximale laenge eines SSID
+#define MACLIST_MAX_LEN (256) 	// Maximale laenge der MacListe
 
 typedef struct {
 	unsigned frame_ctrl:16;
 	unsigned duration_id:16;
-	uint8_t addr1[6]; /* receiver address */
-	uint8_t addr2[6]; /* sender address */
-	uint8_t addr3[6]; /* filtering address */
+	uint8_t addr1[6]; /* Address1 */
+	uint8_t addr2[6]; /* Address2 */
+	uint8_t addr3[6]; /* Address3 */
 	unsigned sequence_ctrl:16;
-	uint8_t addr4[6]; /* optional */
+	uint8_t addr4[6]; /* Address4 */
 } wifi_ieee80211_mac_hdr_t;
 
 typedef struct {
@@ -49,11 +51,11 @@ typedef struct {
 
 static void wifi_sniffer_init(void);
 static void wifi_sniffer_set_channel(uint8_t channel);
-static const char *wifi_sniffer_packet_type2str(wifi_promiscuous_pkt_type_t type);
+// static const char *wifi_sniffer_packet_type2str(wifi_promiscuous_pkt_type_t type);
 static void wifi_sniffer_packet_handler(void *buff, wifi_promiscuous_pkt_type_t type);
 static void wifi_sniffer_deinit();
 static void get_ssid(unsigned char *data, char ssid[SSID_MAX_LEN], uint8_t ssid_len);
-static int get_sn(unsigned char *data);
+// static int get_sn(unsigned char *data);
 static void mqtt_app_start(void);
 static void wifi_init(void);
 static void wifi_connect_deinit();
@@ -62,16 +64,15 @@ static void reboot(char *msg_err);
 static esp_err_t wifi_event_handler(void *ctx, system_event_t *event);
 static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event);
 
-RingbufHandle_t packetRingbuf ;
+RingbufHandle_t packetRingbuf ; //
 static cJSON *mqtt_Packages ;
 static cJSON *jdevices ;
 static const char *TAG = "main";
 static EventGroupHandle_t wifi_event_group;
 static EventGroupHandle_t mqtt_event_group;
 const static int CONNECTED_BIT = BIT0;
-bool running = false;
-char deviceMacList[MACLIST_MAX_LEN][19];
-unsigned int deviceCounter = 0;
+char deviceMacList[MACLIST_MAX_LEN][19];	// Array für Mac-Adressen. Verhindert Redundanz 
+unsigned int deviceCounter = 0;				// Zeigt anzahl der bekannten Mac-Adressen
 
 
 /* Handle for json task */
@@ -82,34 +83,46 @@ uint8_t level = 0, channel = 1;
 void app_main(void)
 {	
 	nvs_flash_init();
-	gpio_set_direction(LED_GPIO_PIN, GPIO_MODE_OUTPUT);	
+	// LED
+	gpio_set_direction(CONFIG_LED_PIN, GPIO_MODE_OUTPUT);	
+	
+	// PIR initialisieren
+	rtc_gpio_deinit(CONFIG_PIR_PIN); //Gibt vom vorherhigen Durchlauf den RTC IO frei. Verhindert Dauerschleife, da IO Wert immer HIGH anzeigen würde.  
+	rtc_gpio_init(CONFIG_PIR_PIN);  // initialisiert PIR Pin als RTC IO neu
+	rtc_gpio_pullup_en(CONFIG_PIR_PIN);
+    ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup(BIT(CONFIG_PIR_PIN), ESP_EXT1_WAKEUP_ANY_HIGH));
+
+	// Ringbuffer initialisieren
 	packetRingbuf = xRingbufferCreate(12 * 1024, RINGBUF_TYPE_NOSPLIT);
+	
+	// JSON Objekt initialisieren 
 	mqtt_Packages = cJSON_CreateObject();
 	jdevices = NULL;
 	jdevices = cJSON_AddArrayToObject(mqtt_Packages, "Mac");
+	
+	// Wifi Sniffer starten
 	wifi_sniffer_init();
 	
+	// Erstellt eine neue Task, die auf der CPU 1 läuft-> Zuständig für das Einpacken der Mac-Adressen in ein JSON-Format
 	xTaskCreate(&json_task, "json_task", 99999, NULL, 1, &xHandle_json);
-	if(xHandle_json == NULL)
+	if(xHandle_json == NULL) //Startet System neu, falls JSON-Taskerstellung nicht erfolgreich war
 		reboot("Impossible to create json task");
 	
-	unsigned long startTime = esp_log_timestamp();
+	unsigned long startTime = esp_log_timestamp(); // Setzt Timer für Snifferzeit
 	
 	while(true){			
-			
-		if (esp_log_timestamp() - startTime >= (CONFIG_WIFI_SNIFFING_TIME * 1000) && running == false) {
-			running = true;
-			
-			//spÃ¤ter fÃ¼r mqtt
-
-			
+			// Wird true, sobald die Sniffer Zeit abläuft
+		if (esp_log_timestamp() - startTime >= (CONFIG_WIFI_SNIFFING_TIME * 1000) ) {
+						
 			vTaskDelay( 100 / portTICK_PERIOD_MS);
 			wifi_sniffer_deinit();
 			wifi_init();
 			mqtt_app_start();
-			////
-		}else if(running == false){
-			gpio_set_level(LED_GPIO_PIN, level ^= 1);
+			wifi_connect_deinit();
+			ESP_LOGI(TAG, "Enter Deepsleep");
+			esp_deep_sleep_start();
+		}else {
+			gpio_set_level(CONFIG_LED_PIN, level ^= 1);
 			vTaskDelay( 60 / portTICK_PERIOD_MS);
 			wifi_sniffer_set_channel(channel);
 			channel = (channel % CONFIG_WIFI_CHANNEL) + 1;	
@@ -117,23 +130,9 @@ void app_main(void)
 	}
 }
 
-// void loop(){
-		// if (esp_log_timestamp() - startTime >= (CONFIG_WIFI_SNIFFING_TIME * 1000) && running == false) {
-			// running = true;	
-			// wifi_sniffer_deinit();
-			// wifi_init();
-			// mqtt_app_start();
-			// vTaskDelete(&xHandle_json);
-		// }else if(running == false){
-			// gpio_set_level(LED_GPIO_PIN, level ^= 1);
-			// vTaskDelay( 60 / portTICK_PERIOD_MS);
-			// wifi_sniffer_set_channel(channel);
-			// channel = (channel % CONFIG_WIFI_CHANNEL) + 1;	
-		// }
-// }
-
 
 /* Sniffer*/
+//WiFi Driver zum empfangen der Pakete initialisieren
 void wifi_sniffer_init(void)
 {
     tcpip_adapter_init();
@@ -149,70 +148,71 @@ void wifi_sniffer_init(void)
 	esp_wifi_set_promiscuous_rx_cb(&wifi_sniffer_packet_handler);	
 }
 
+// Gibt alle Ressourcen des WLAN-Sniffers frei und stoppt das WLAN.
 static void wifi_sniffer_deinit()
 {
-	ESP_ERROR_CHECK(esp_wifi_set_promiscuous(false)); //set as 'false' the promiscuous mode
-	ESP_ERROR_CHECK(esp_wifi_stop()); //it stop soft-AP and free soft-AP control block
-	ESP_ERROR_CHECK(esp_wifi_deinit()); //free all resource allocated in esp_wifi_init() and stop WiFi task
+	ESP_ERROR_CHECK(esp_wifi_set_promiscuous(false)); 
+	ESP_ERROR_CHECK(esp_wifi_stop()); 
+	ESP_ERROR_CHECK(esp_wifi_deinit()); 
 }
-
+// Zuständig für das Wechseln des WLAN Kanals
 void wifi_sniffer_set_channel(uint8_t channel)
 {
 	esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
 }
 
-const char * wifi_sniffer_packet_type2str(wifi_promiscuous_pkt_type_t type)
-{
-	switch(type) {
-	case WIFI_PKT_MGMT: return "MGMT";
-	case WIFI_PKT_DATA: return "DATA";
-	default:	
-	case WIFI_PKT_MISC: return "MISC";
-	}
-}
+// Gibt Type des WLAN-Frames 
+// const char * wifi_sniffer_packet_type2str(wifi_promiscuous_pkt_type_t type)
+// {
+	// switch(type) {
+	// case WIFI_PKT_MGMT: return "MGMT";
+	// case WIFI_PKT_DATA: return "DATA";
+	// default:	
+	// case WIFI_PKT_MISC: return "MISC";
+	// }
+// }
 
+// Callback: Wird bei jeden empfangenden WLAN-Frame aufgerufen
 void wifi_sniffer_packet_handler(void* buff, wifi_promiscuous_pkt_type_t type)
-{
-		
+{		
 	if (type == WIFI_PKT_MGMT && CONFIG_PROBE_REQUEST){
+		// Speichert Paket des Types Management in den Ringbuffer
 		wifi_promiscuous_pkt_t *ppkt = (wifi_promiscuous_pkt_t *)buff;
 		if( ppkt->rx_ctrl.rssi > CONFIG_RSSI_Max){			
 			xRingbufferSend(packetRingbuf, ppkt, ppkt->rx_ctrl.sig_len, 1);
 		}
 	}	
 	else if(!CONFIG_PROBE_REQUEST){
+		// Speichert beliebiges Paket in den Ringbuffer
 		wifi_promiscuous_pkt_t *ppkt = (wifi_promiscuous_pkt_t *)buff;
 		if( ppkt->rx_ctrl.rssi > CONFIG_RSSI_Max){
 			xRingbufferSend(packetRingbuf, ppkt, ppkt->rx_ctrl.sig_len, 1);
 		}
 	}		
 }
-
+// Parsen des SSID
 static void get_ssid(unsigned char *data, char ssid[SSID_MAX_LEN], uint8_t ssid_len)
 {
 	int i, j;
 			for(i=26, j=0; j<=SSID_MAX_LEN && j<=ssid_len-1 ; i++, j++){
 				ssid[j] = data[i];
 	}
-	// ssid[j] ="\0";
 }
 
 // static int get_sn(unsigned char *data)
 // {
 	// int sn;
     // char num[5] = "\0";
-
 	// sprintf(num, "%02x%02x", data[22], data[23]);
     // sscanf(num, "%x", &sn);
-
     // return sn;
 // }
 
 /*END Sniffer*/
+
+/*MQTT*/
 static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event)
 {
-  esp_mqtt_client_handle_t client = event->client;
-  // your_context_t *context = event->context;
   switch (event->event_id) {
     case MQTT_EVENT_CONNECTED:
       ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
@@ -239,7 +239,7 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event)
   return ESP_OK;
 }
 
-
+// Bereitet MQTT vor und sendet JSON Nachricht
 static void mqtt_app_start(void)
 {
 	int msg_id;
@@ -268,11 +268,13 @@ static void mqtt_app_start(void)
 	printf("%s", string);		
 	msg_id = esp_mqtt_client_publish(client, CONFIG_MQTT_TOPIC, string, strlen(string), 0, 0);
 	ESP_LOGI(TAG, "[WI-FI] Sent publish successful on topic=%s, msg_id=%d", CONFIG_MQTT_TOPIC, msg_id);
+	esp_mqtt_client_stop(client);
 }
 
 /*END MQTT*/
 
 /*WIFI INIT*/
+
 static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
 {
     switch (event->event_id) {
@@ -292,6 +294,7 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
     return ESP_OK;
 }
 
+//WiFi Driver zum senden initialisieren
 static void wifi_init(void)
 {
 	nvs_flash_init();
@@ -313,19 +316,22 @@ static void wifi_init(void)
     ESP_LOGI(TAG, "Waiting for wifi");
     xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
 }
-// static void wifi_connect_deinit()
-// {
-	// ESP_ERROR_CHECK(esp_wifi_disconnect()); //disconnect the ESP32 WiFi station from the AP
-	// ESP_ERROR_CHECK(esp_wifi_stop()); //it stop station and free station control block
-	// ESP_ERROR_CHECK(esp_wifi_deinit()); //free all resource allocated in esp_wifi_init and stop WiFi task
-// }
-/*WIFI End*/
+
+// Gibt alle Ressourcen des WLANs frei und stoppt das WLAN.
+static void wifi_connect_deinit()
+{
+	ESP_ERROR_CHECK(esp_wifi_disconnect()); //disconnect the ESP32 WiFi station from the AP
+	ESP_ERROR_CHECK(esp_wifi_stop()); //it stop station and free station control block
+	ESP_ERROR_CHECK(esp_wifi_deinit()); //free all resource allocated in esp_wifi_init and stop WiFi task
+}
+// /*WIFI End*/
 
 /*JSON*/
+
+// Json Task: wandelt die im im Ringerbuffer hinterlegten Mac-Adressen in ein JSON-Format um
 static void json_task(void *pvParameter)
 {
 
-	// ESP_LOGI("json_task: Core %d for time intensive operation active!", xPortGetCoreID());
 	while (1) {
 		// Daten aus Ringpuffer nehmen
 		size_t len;
@@ -333,7 +339,7 @@ static void json_task(void *pvParameter)
 		wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)ppkt->payload;
 		wifi_ieee80211_mac_hdr_t *hdr = &ipkt->hdr;
 		
-		//Falls Ringpuffer leer ist, 
+		//Gibt Ringbuffer frei und beendet Task. 
 		if (len == 1) {
 			vRingbufferReturnItem(packetRingbuf, ppkt);
 			vRingbufferDelete(packetRingbuf);
@@ -347,35 +353,37 @@ static void json_task(void *pvParameter)
 		// uint8_t frameSubType = (hdr->frame_ctrl & 0b0000000011110000) >> 4;
 		uint8_t toDS         = (hdr->frame_ctrl & 0b0000000100000000) >> 8;
 		uint8_t fromDS       = (hdr->frame_ctrl & 0b0000001000000000) >> 9;
-				
-		if( (fromDS == 0 && toDS == 1) || (hdr->frame_ctrl== 64 ) )
+	
+	
+		//Nur die MAC-Adressen eines Probe Request	Paket 
+		//oder Pakete die von einem Client verschickt wurden, werden in einen JSON-Format umgewandelt (siehe Kapitel 2.2.2 Aufbau des WLAN-Frames)
+		if( (fromDS == 0 && toDS == 1) || (hdr->frame_ctrl == 64 ) )
 		{	
-			bool knowMac = false;	
+			bool knowMac = false;	//Flag für bekannte MAC-Adressem
 			char temp_Adr[19]; 
 	
 			snprintf(temp_Adr,19 ,"%02x:%02x:%02x:%02x:%02x:%02x", hdr->addr2[0],hdr->addr2[1],hdr->addr2[2],
 				 hdr->addr2[3],hdr->addr2[4],hdr->addr2[5]);
 				 
-			// printf("\n %d", deviceCounter);
-			// printf("\n Vergleiche  %s mit ", temp_Adr);
+			// Prüft ob aktuelle Mac-Adressen bereits bekannt ist. Falls ja, bricht aktuelle Task ab
 			for(int i=1; i <= deviceCounter; i++){
-				printf(" %s ",  deviceMacList[i-1]);
+				// printf(" %s ",  deviceMacList[i-1]);
 				if( 0 == memcmp(deviceMacList[i-1], temp_Adr, 19 ) ){
-					knowMac = true;
-					// printf("\nbreake ");					
+					knowMac = true;				
 					break;
 					
 				}
 			}
-								
+			
+			// Falls aktuelle Mac-Adressen neu ist, setze sie in die Mac-Liste ein 
 			if(!knowMac &&  (deviceCounter+1 <= MACLIST_MAX_LEN)){
 				char ssid[SSID_MAX_LEN] = "\0";
-				char packetID[20];
+				// char packetID[20];
 				// cJSON *jdevices = NULL;
 				cJSON *jssid =  cJSON_CreateObject();
-				cJSON *channel =  cJSON_CreateObject();
+				// cJSON *channel =  cJSON_CreateObject();
 				cJSON *adr =  cJSON_CreateObject();
-				cJSON *rssi = cJSON_CreateObject();
+				// cJSON *rssi = cJSON_CreateObject();
 
 				// if(CONFIG_PROBE_REQUEST){
 					// sprintf(packetID, "Probe Request %d", deviceCounter);
@@ -385,7 +393,8 @@ static void json_task(void *pvParameter)
 					// jdevices = cJSON_AddArrayToObject(mqtt_Packages, packetID);
 				// }
 				
-				if( CONFIG_SSID || hdr->frame_ctrl== 64  ){
+				// Prüft SSID im Paket, falls Option aktiviert ist
+				if( CONFIG_SSID && hdr->frame_ctrl== 64  ){
 					uint8_t ssid_len;
 					
 					ssid_len = ppkt->payload[25];
@@ -393,13 +402,11 @@ static void json_task(void *pvParameter)
 						get_ssid(ppkt->payload, ssid, ssid_len);	
 					}	
 				}
-						
-				// deviceMacList[deviceCounter] = temp_Adr;
+				
+				//Kopiert neue Mac-Adressen in die deviceMacList und erhöht den deviceCounter
 				strcpy(deviceMacList[deviceCounter], temp_Adr);				
-				// printf("\n %s in die Liste eingefÃ¼gt", deviceMacList[deviceCounter]);
 				deviceCounter++;
-				
-				
+							
 				cJSON_AddStringToObject(adr, "Adresse", temp_Adr);
 				// cJSON_AddNumberToObject(channel, "Channel", ppkt->rx_ctrl.channel);
 				// cJSON_AddNumberToObject(rssi, "RSSI", ppkt->rx_ctrl.rssi);
@@ -408,21 +415,14 @@ static void json_task(void *pvParameter)
 				cJSON_AddItemToArray(jdevices, adr);
 				// cJSON_AddItemToArray(jdevices, channel);
 				// cJSON_AddItemToArray(jdevices, rssi);
-				cJSON_AddItemToArray(adr, jssid);
-				
-			}
-			
-			// string = cJSON_Print(mqtt_Packages);
-			// if (string == NULL) {
-				// fprintf(stderr, "Failed to print monitor.\n");
-			// }
-			// printf("%s", string);		
+				cJSON_AddItemToArray(adr, jssid);				
+			}		
 		}
-
+			//Löscht aktuelles WLAN-Frame aus dem Ringerbuffer
 			vRingbufferReturnItem(packetRingbuf, ppkt);
-
 	}
 }
+/*JSON END*/
 
 static void reboot(char *msg_err)
 {
