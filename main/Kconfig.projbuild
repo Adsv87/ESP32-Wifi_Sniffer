@@ -25,6 +25,12 @@ config WIFI_SNIFFING_TIME
 	default 30
 	help
 		Time must be in seconds
+		
+config SWITCHING_TIME
+	int "Channel switch Time in seconds"
+	default 60
+	help
+		
 
 config RSSI_Max
 	int "RSSI_Max"

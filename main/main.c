@@ -21,7 +21,6 @@
 #include "driver/rtc_io.h"
 
 
-
 #include "lwip/sockets.h"
 #include "lwip/dns.h"
 #include "lwip/netdb.h"
@@ -45,17 +44,15 @@ typedef struct {
 
 typedef struct {
 	wifi_ieee80211_mac_hdr_t hdr;
-	unsigned char payload[]; /* network data ended with 4 bytes csum (CRC32) */
+	unsigned char payload[]; 
 } wifi_ieee80211_packet_t;
 
 
 static void wifi_sniffer_init(void);
 static void wifi_sniffer_set_channel(uint8_t channel);
-// static const char *wifi_sniffer_packet_type2str(wifi_promiscuous_pkt_type_t type);
 static void wifi_sniffer_packet_handler(void *buff, wifi_promiscuous_pkt_type_t type);
 static void wifi_sniffer_deinit();
 static void get_ssid(unsigned char *data, char ssid[SSID_MAX_LEN], uint8_t ssid_len);
-// static int get_sn(unsigned char *data);
 static void mqtt_app_start(void);
 static void wifi_init(void);
 static void wifi_connect_deinit();
@@ -75,14 +72,14 @@ char deviceMacList[MACLIST_MAX_LEN][19];	// Array für Mac-Adressen. Verhindert R
 unsigned int deviceCounter = 0;				// Zeigt anzahl der bekannten Mac-Adressen
 
 
-/* Handle for json task */
+/* Handle für json task */
 static TaskHandle_t xHandle_json = NULL;
 
 uint8_t level = 0, channel = 1;
 
 void app_main(void)
 {	
-	nvs_flash_init();
+	
 	// LED
 	gpio_set_direction(CONFIG_LED_PIN, GPIO_MODE_OUTPUT);	
 	
@@ -114,7 +111,6 @@ void app_main(void)
 			// Wird true, sobald die Sniffer Zeit abläuft
 		if (esp_log_timestamp() - startTime >= (CONFIG_WIFI_SNIFFING_TIME * 1000) ) {
 						
-			vTaskDelay( 100 / portTICK_PERIOD_MS);
 			wifi_sniffer_deinit();
 			wifi_init();
 			mqtt_app_start();
@@ -123,9 +119,9 @@ void app_main(void)
 			esp_deep_sleep_start();
 		}else {
 			gpio_set_level(CONFIG_LED_PIN, level ^= 1);
-			vTaskDelay( 60 / portTICK_PERIOD_MS);
-			wifi_sniffer_set_channel(channel);
-			channel = (channel % CONFIG_WIFI_CHANNEL) + 1;	
+			vTaskDelay( CONFIG_SWITCHING_TIME / portTICK_PERIOD_MS);
+			channel = (channel % CONFIG_WIFI_CHANNEL) + 1;
+			wifi_sniffer_set_channel(channel);	
 		}
 	}
 }
@@ -135,6 +131,7 @@ void app_main(void)
 //WiFi Driver zum empfangen der Pakete initialisieren
 void wifi_sniffer_init(void)
 {
+	nvs_flash_init();
     tcpip_adapter_init();
     ESP_ERROR_CHECK( esp_event_loop_init(wifi_event_handler, NULL) );
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -155,22 +152,13 @@ static void wifi_sniffer_deinit()
 	ESP_ERROR_CHECK(esp_wifi_stop()); 
 	ESP_ERROR_CHECK(esp_wifi_deinit()); 
 }
+
 // Zuständig für das Wechseln des WLAN Kanals
 void wifi_sniffer_set_channel(uint8_t channel)
 {
 	esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
 }
 
-// Gibt Type des WLAN-Frames 
-// const char * wifi_sniffer_packet_type2str(wifi_promiscuous_pkt_type_t type)
-// {
-	// switch(type) {
-	// case WIFI_PKT_MGMT: return "MGMT";
-	// case WIFI_PKT_DATA: return "DATA";
-	// default:	
-	// case WIFI_PKT_MISC: return "MISC";
-	// }
-// }
 
 // Callback: Wird bei jeden empfangenden WLAN-Frame aufgerufen
 void wifi_sniffer_packet_handler(void* buff, wifi_promiscuous_pkt_type_t type)
@@ -182,7 +170,7 @@ void wifi_sniffer_packet_handler(void* buff, wifi_promiscuous_pkt_type_t type)
 			xRingbufferSend(packetRingbuf, ppkt, ppkt->rx_ctrl.sig_len, 1);
 		}
 	}	
-	else if(!CONFIG_PROBE_REQUEST){
+	else {
 		// Speichert beliebiges Paket in den Ringbuffer
 		wifi_promiscuous_pkt_t *ppkt = (wifi_promiscuous_pkt_t *)buff;
 		if( ppkt->rx_ctrl.rssi > CONFIG_RSSI_Max){
@@ -198,15 +186,6 @@ static void get_ssid(unsigned char *data, char ssid[SSID_MAX_LEN], uint8_t ssid_
 				ssid[j] = data[i];
 	}
 }
-
-// static int get_sn(unsigned char *data)
-// {
-	// int sn;
-    // char num[5] = "\0";
-	// sprintf(num, "%02x%02x", data[22], data[23]);
-    // sscanf(num, "%x", &sn);
-    // return sn;
-// }
 
 /*END Sniffer*/
 
@@ -346,17 +325,11 @@ static void json_task(void *pvParameter)
 			vTaskDelete(NULL);
 		}		
 		
-		// unsigned int frameControl = ((unsigned int)snifferPacket->data[1] << 8) + snifferPacket->data[0];
-
-		// uint8_t version      = (hdr->frame_ctrl & 0b0000000000000011) >> 0;
-		// uint8_t frameType    = (hdr->frame_ctrl & 0b0000000000001100) >> 2;
-		// uint8_t frameSubType = (hdr->frame_ctrl & 0b0000000011110000) >> 4;
 		uint8_t toDS         = (hdr->frame_ctrl & 0b0000000100000000) >> 8;
 		uint8_t fromDS       = (hdr->frame_ctrl & 0b0000001000000000) >> 9;
-	
-	
+		
 		//Nur die MAC-Adressen eines Probe Request	Paket 
-		//oder Pakete die von einem Client verschickt wurden, werden in einen JSON-Format umgewandelt (siehe Kapitel 2.2.2 Aufbau des WLAN-Frames)
+		//oder Pakete die von einem Client verschickt wurden, werden in einen JSON-Format umgewandelt (siehe Kapitel 2.1.1 Aufbau des IEEE 802.11 WLAN-Frames)
 		if( (fromDS == 0 && toDS == 1) || (hdr->frame_ctrl == 64 ) )
 		{	
 			bool knowMac = false;	//Flag für bekannte MAC-Adressem
@@ -367,7 +340,7 @@ static void json_task(void *pvParameter)
 				 
 			// Prüft ob aktuelle Mac-Adressen bereits bekannt ist. Falls ja, bricht aktuelle Task ab
 			for(int i=1; i <= deviceCounter; i++){
-				// printf(" %s ",  deviceMacList[i-1]);
+
 				if( 0 == memcmp(deviceMacList[i-1], temp_Adr, 19 ) ){
 					knowMac = true;				
 					break;
@@ -378,21 +351,11 @@ static void json_task(void *pvParameter)
 			// Falls aktuelle Mac-Adressen neu ist, setze sie in die Mac-Liste ein 
 			if(!knowMac &&  (deviceCounter+1 <= MACLIST_MAX_LEN)){
 				char ssid[SSID_MAX_LEN] = "\0";
-				// char packetID[20];
-				// cJSON *jdevices = NULL;
-				cJSON *jssid =  cJSON_CreateObject();
-				// cJSON *channel =  cJSON_CreateObject();
-				cJSON *adr =  cJSON_CreateObject();
-				// cJSON *rssi = cJSON_CreateObject();
 
-				// if(CONFIG_PROBE_REQUEST){
-					// sprintf(packetID, "Probe Request %d", deviceCounter);
-					// jdevices = cJSON_AddArrayToObject(mqtt_Packages, packetID);
-				// }else{
-					// sprintf(packetID, "WLAN Traffic %d", deviceCounter);
-					// jdevices = cJSON_AddArrayToObject(mqtt_Packages, packetID);
-				// }
-				
+				cJSON *jssid =  cJSON_CreateObject();
+				cJSON *adr =  cJSON_CreateObject();
+
+			
 				// Prüft SSID im Paket, falls Option aktiviert ist
 				if( CONFIG_SSID && hdr->frame_ctrl== 64  ){
 					uint8_t ssid_len;
@@ -408,18 +371,14 @@ static void json_task(void *pvParameter)
 				deviceCounter++;
 							
 				cJSON_AddStringToObject(adr, "Adresse", temp_Adr);
-				// cJSON_AddNumberToObject(channel, "Channel", ppkt->rx_ctrl.channel);
-				// cJSON_AddNumberToObject(rssi, "RSSI", ppkt->rx_ctrl.rssi);
 				cJSON_AddStringToObject(jssid, "SSID", ssid);
 			
 				cJSON_AddItemToArray(jdevices, adr);
-				// cJSON_AddItemToArray(jdevices, channel);
-				// cJSON_AddItemToArray(jdevices, rssi);
 				cJSON_AddItemToArray(adr, jssid);				
 			}		
 		}
-			//Löscht aktuelles WLAN-Frame aus dem Ringerbuffer
-			vRingbufferReturnItem(packetRingbuf, ppkt);
+		//Löscht aktuelles WLAN-Frame aus dem Ringerbuffer
+		vRingbufferReturnItem(packetRingbuf, ppkt);
 	}
 }
 /*JSON END*/
